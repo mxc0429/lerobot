@@ -1,0 +1,75 @@
+<mujoco model="so101">
+  <compiler angle="radian" coordinate="local" meshdir="" texturedir=""/>
+  <option gravity="0 0 -9.81" timestep="0.002"/>
+
+  <asset>
+    <texture type="skybox" builtin="gradient" rgb1="0.9 0.9 1.0" rgb2="0.6 0.6 0.8" width="512" height="512"/>
+    <material name="grey" rgba="0.7 0.7 0.7 1"/>
+    <material name="black" rgba="0.2 0.2 0.2 1"/>
+    <material name="red" rgba="0.8 0.2 0.2 1"/>
+  </asset>
+
+  <worldbody>
+    <light pos="1 1 2" dir="-1 -1 -2" diffuse="1 1 1" specular="0.2 0.2 0.2"/>
+    <geom type="plane" size="5 5 0.1" pos="0 0 0" rgba="0.9 0.9 0.9 1"/>
+
+    <!-- Front camera -->
+    <camera name="front_cam" pos="1.2 0.0 0.8" euler="0.0 0.6 3.1415"/>
+
+    <!-- Base -->
+    <body name="base" pos="0 0 0.05">
+      <geom type="cylinder" size="0.06 0.05" rgba="0.2 0.2 0.2 1"/>
+
+      <!-- Joint 1 (shoulder_pan) -->
+      <body name="link1" pos="0 0 0.05">
+        <joint name="shoulder_pan" type="hinge" axis="0 0 1" range="-3.14 3.14" damping="0.1"/>
+        <geom type="capsule" fromto="0 0 0  0 0 0.12" size="0.03" material="grey"/>
+
+        <!-- Joint 2 (shoulder_lift) -->
+        <body name="link2" pos="0 0 0.12">
+          <joint name="shoulder_lift" type="hinge" axis="0 1 0" range="-2.0 2.0" damping="0.1"/>
+          <geom type="capsule" fromto="0 0 0  0 0 0.16" size="0.028" material="grey"/>
+
+          <!-- Joint 3 (elbow_flex) -->
+          <body name="link3" pos="0 0 0.16">
+            <joint name="elbow_flex" type="hinge" axis="0 1 0" range="-2.0 2.0" damping="0.1"/>
+            <geom type="capsule" fromto="0 0 0  0 0 0.16" size="0.026" material="grey"/>
+
+            <!-- Joint 4 (wrist_flex) -->
+            <body name="link4" pos="0 0 0.16">
+              <joint name="wrist_flex" type="hinge" axis="0 1 0" range="-2.0 2.0" damping="0.05"/>
+              <geom type="capsule" fromto="0 0 0  0 0 0.10" size="0.022" material="grey"/>
+
+              <!-- Joint 5 (wrist_roll) -->
+              <body name="link5" pos="0 0 0.10">
+                <joint name="wrist_roll" type="hinge" axis="0 0 1" range="-3.14 3.14" damping="0.02"/>
+                <geom type="capsule" fromto="0 0 0  0 0 0.08" size="0.02" material="grey"/>
+
+                <!-- Gripper (single DOF approximation) -->
+                <body name="gripper_base" pos="0 0 0.08">
+                  <geom type="sphere" size="0.02" rgba="0.1 0.1 0.1 1"/>
+                  <!-- A simple fixed fingertip for now -->
+                  <body name="tool" pos="0 0 0.04">
+                    <geom type="capsule" fromto="0 0 0  0 0 0.06" size="0.01" material="red"/>
+                    <site name="ee_site" pos="0 0 0.06" size="0.01" rgba="0.1 0.9 0.1 1"/>
+                  </body>
+                </body>
+              </body>
+            </body>
+          </body>
+        </body>
+      </body>
+    </body>
+  </worldbody>
+
+  <actuator>
+    <!-- Position actuators mapped to joints -->
+    <position name="shoulder_pan_act" joint="shoulder_pan" kp="50" kv="5"/>
+    <position name="shoulder_lift_act" joint="shoulder_lift" kp="50" kv="5"/>
+    <position name="elbow_flex_act" joint="elbow_flex" kp="50" kv="5"/>
+    <position name="wrist_flex_act" joint="wrist_flex" kp="40" kv="4"/>
+    <position name="wrist_roll_act" joint="wrist_roll" kp="30" kv="3"/>
+  </actuator>
+</mujoco>
+
+
