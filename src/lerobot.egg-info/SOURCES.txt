@@ -58,6 +58,8 @@ src/lerobot/envs/factory.py
 src/lerobot/envs/libero.py
 src/lerobot/envs/metaworld.py
 src/lerobot/envs/utils.py
+src/lerobot/envs/so101_mujoco/__init__.py
+src/lerobot/envs/so101_mujoco/env.py
 src/lerobot/model/kinematics.py
 src/lerobot/motors/__init__.py
 src/lerobot/motors/calibration_gui.py

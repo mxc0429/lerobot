@@ -40,7 +40,15 @@ class So101MujocoEnv(gym.Env):
         if not os.path.exists(self.cfg.xml_path):
             raise FileNotFoundError(f"MJCF file not found at {self.cfg.xml_path}")
 
-        self.model = mujoco.MjModel.from_xml_path(self.cfg.xml_path)
+        # MuJoCo needs to load XML from its directory for relative paths (meshdir) to work
+        xml_path = Path(self.cfg.xml_path).resolve()
+        original_cwd = os.getcwd()
+        try:
+            os.chdir(xml_path.parent)
+            self.model = mujoco.MjModel.from_xml_path(str(xml_path.name))
+        finally:
+            os.chdir(original_cwd)
+        
         self.data = mujoco.MjData(self.model)
 
         self.nq = self.model.nq
