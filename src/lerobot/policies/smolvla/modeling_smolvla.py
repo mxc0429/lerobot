@@ -235,12 +235,17 @@ class SmolVLAPolicy(PreTrainedPolicy):
 
         self.model = VLAFlowMatching(config)
         self.reset()
+        
+        # Initialize memory tokens for RMT
+        self._mem_tokens_state = None  # Store memory state across time steps
 
     def reset(self):
         """This should be called whenever the environment is reset."""
         self._queues = {
             ACTION: deque(maxlen=self.config.n_action_steps),
         }
+        # Reset memory tokens state
+        self._mem_tokens_state = None
 
     def get_optim_params(self) -> dict:
         return self.parameters()
@@ -260,7 +265,14 @@ class SmolVLAPolicy(PreTrainedPolicy):
         lang_tokens = batch[f"{OBS_LANGUAGE_TOKENS}"]
         lang_masks = batch[f"{OBS_LANGUAGE_ATTENTION_MASK}"]
 
-        actions = self.model.sample_actions(images, img_masks, lang_tokens, lang_masks, state, noise=noise)
+        actions, updated_mem_tokens = self.model.sample_actions(
+            images, img_masks, lang_tokens, lang_masks, state, 
+            noise=noise, mem_tokens=self._mem_tokens_state
+        )
+        
+        # Update memory tokens state for next time step
+        if self.config.num_mem_tokens > 0:
+            self._mem_tokens_state = updated_mem_tokens.detach()
 
         # Unpad actions
         original_action_dim = self.config.action_feature.shape[0]
@@ -323,7 +335,9 @@ class SmolVLAPolicy(PreTrainedPolicy):
         actions = self.prepare_action(batch)
         actions_is_pad = batch.get("actions_id_pad")
         loss_dict = {}
-        losses = self.model.forward(images, img_masks, lang_tokens, lang_masks, state, actions, noise, time)
+        
+        # Forward pass with memory tokens (training doesn't use persistent memory)
+        losses, _ = self.model.forward(images, img_masks, lang_tokens, lang_masks, state, actions, noise, time)
         loss_dict["losses_after_forward"] = losses.clone()
 
         if actions_is_pad is not None:
@@ -500,6 +514,9 @@ class VLAFlowMatching(nn.Module):
             self.vlm_with_expert.expert_hidden_size, self.vlm_with_expert.expert_hidden_size
         )
 
+        # Initialize RMT memory tokens
+        self.init_mem_tokens()
+
         self.set_requires_grad()
         self.fake_image_token = self.vlm_with_expert.processor.tokenizer.fake_image_token_id
         self.global_image_token = self.vlm_with_expert.processor.tokenizer.global_image_token_id
@@ -510,6 +527,16 @@ class VLAFlowMatching(nn.Module):
         self.add_image_special_tokens = self.config.add_image_special_tokens
         self.image_end_token = torch.tensor([self.fake_image_token], dtype=torch.long)
         self.prefix_length = self.config.prefix_length
+    
+    def init_mem_tokens(self):
+        """Initialize learnable memory tokens for RMT."""
+        if self.config.num_mem_tokens == 0:
+            self.mem_tokens = None
+        else:
+            # Create learnable memory tokens with VLM hidden size
+            hidden_size = self.vlm_with_expert.config.text_config.hidden_size
+            mem_tokens = torch.randn(self.config.num_mem_tokens, 1, hidden_size) * 0.02
+            self.mem_tokens = nn.Parameter(mem_tokens, requires_grad=True)
 
     def set_requires_grad(self):
         for params in self.state_proj.parameters():
@@ -532,7 +559,7 @@ class VLAFlowMatching(nn.Module):
         return time
 
     def embed_prefix(
-        self, images, img_masks, lang_tokens, lang_masks, state: torch.Tensor = None
+        self, images, img_masks, lang_tokens, lang_masks, state: torch.Tensor = None, mem_tokens: torch.Tensor = None
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """Embed images with SigLIP and language tokens with embedding layer to prepare
         for SmolVLM transformer processing.
@@ -540,6 +567,27 @@ class VLAFlowMatching(nn.Module):
         embs = []
         pad_masks = []
         att_masks = []
+        
+        # Add memory tokens at the beginning if enabled
+        if self.config.num_mem_tokens > 0:
+            if mem_tokens is None:
+                # Use initialized memory tokens
+                mem_emb = self.mem_tokens.expand(-1, images[0].shape[0], -1)  # [num_mem, batch, hidden]
+            else:
+                # Use provided memory tokens from previous time step
+                mem_emb = mem_tokens
+            
+            mem_emb = mem_emb.transpose(0, 1)  # [batch, num_mem, hidden]
+            embs.append(mem_emb)
+            
+            bsize = mem_emb.shape[0]
+            device = mem_emb.device
+            mem_mask = torch.ones(bsize, self.config.num_mem_tokens, dtype=torch.bool, device=device)
+            pad_masks.append(mem_mask)
+            
+            # Memory tokens can attend to each other (0) but not to future tokens
+            att_masks += [0] * self.config.num_mem_tokens
+        
         for _img_idx, (
             img,
             img_mask,
@@ -610,6 +658,18 @@ class VLAFlowMatching(nn.Module):
 
         # Set attention masks so that image and language inputs do not attend to state or actions
         att_masks += [1] * (states_seq_len)
+        
+        # Add memory tokens at the end if enabled
+        if self.config.num_mem_tokens > 0 and self.config.mem_at_end:
+            if mem_tokens is None:
+                mem_emb_end = self.mem_tokens.expand(-1, bsize, -1).transpose(0, 1)
+            else:
+                mem_emb_end = mem_tokens.transpose(0, 1)
+            embs.append(mem_emb_end)
+            mem_mask_end = torch.ones(bsize, self.config.num_mem_tokens, dtype=torch.bool, device=device)
+            pad_masks.append(mem_mask_end)
+            att_masks += [1] * self.config.num_mem_tokens
+        
         embs = torch.cat(embs, dim=1)
         pad_masks = torch.cat(pad_masks, dim=1)
         att_masks = torch.tensor(att_masks, dtype=torch.bool, device=pad_masks.device)
@@ -669,9 +729,11 @@ class VLAFlowMatching(nn.Module):
         return embs, pad_masks, att_masks
 
     def forward(
-        self, images, img_masks, lang_tokens, lang_masks, state, actions, noise=None, time=None
-    ) -> Tensor:
-        """Do a full training forward pass and compute the loss (batch_size x num_steps x num_motors)"""
+        self, images, img_masks, lang_tokens, lang_masks, state, actions, noise=None, time=None, mem_tokens=None
+    ) -> tuple[Tensor, Tensor | None]:
+        """Do a full training forward pass and compute the loss (batch_size x num_steps x num_motors)
+        Returns: (losses, updated_mem_tokens)
+        """
         if noise is None:
             noise = self.sample_noise(actions.shape, actions.device)
 
@@ -682,7 +744,7 @@ class VLAFlowMatching(nn.Module):
         x_t = time_expanded * noise + (1 - time_expanded) * actions
         u_t = noise - actions
         prefix_embs, prefix_pad_masks, prefix_att_masks = self.embed_prefix(
-            images, img_masks, lang_tokens, lang_masks, state=state
+            images, img_masks, lang_tokens, lang_masks, state=state, mem_tokens=mem_tokens
         )
         suffix_embs, suffix_pad_masks, suffix_att_masks = self.embed_suffix(x_t, time)
 
@@ -691,7 +753,7 @@ class VLAFlowMatching(nn.Module):
 
         att_2d_masks = make_att_2d_masks(pad_masks, att_masks)
         position_ids = torch.cumsum(pad_masks, dim=1) - 1
-        (_, suffix_out), _ = self.vlm_with_expert.forward(
+        (prefix_out, suffix_out), _ = self.vlm_with_expert.forward(
             attention_mask=att_2d_masks,
             position_ids=position_ids,
             past_key_values=None,
@@ -699,15 +761,29 @@ class VLAFlowMatching(nn.Module):
             use_cache=False,
             fill_kv_cache=False,
         )
+        
+        # Extract updated memory tokens if enabled
+        updated_mem_tokens = None
+        if self.config.num_mem_tokens > 0:
+            if self.config.mem_at_end:
+                # Memory tokens are at the end of prefix
+                updated_mem_tokens = prefix_out[:, -self.config.num_mem_tokens:, :]
+            else:
+                # Memory tokens are at the beginning of prefix
+                updated_mem_tokens = prefix_out[:, :self.config.num_mem_tokens, :]
+            updated_mem_tokens = updated_mem_tokens.transpose(0, 1)  # [num_mem, batch, hidden]
+        
         suffix_out = suffix_out[:, -self.config.chunk_size :]
         # Original openpi code, upcast attention output
         suffix_out = suffix_out.to(dtype=torch.float32)
         v_t = self.action_out_proj(suffix_out)
         losses = F.mse_loss(u_t, v_t, reduction="none")
-        return losses
+        return losses, updated_mem_tokens
 
-    def sample_actions(self, images, img_masks, lang_tokens, lang_masks, state, noise=None) -> Tensor:
-        """Do a full inference forward and compute the action (batch_size x num_steps x num_motors)"""
+    def sample_actions(self, images, img_masks, lang_tokens, lang_masks, state, noise=None, mem_tokens=None) -> tuple[Tensor, Tensor | None]:
+        """Do a full inference forward and compute the action (batch_size x num_steps x num_motors)
+        Returns: (actions, updated_mem_tokens)
+        """
         bsize = state.shape[0]
         device = state.device
 
@@ -716,12 +792,12 @@ class VLAFlowMatching(nn.Module):
             noise = self.sample_noise(actions_shape, device)
 
         prefix_embs, prefix_pad_masks, prefix_att_masks = self.embed_prefix(
-            images, img_masks, lang_tokens, lang_masks, state=state
+            images, img_masks, lang_tokens, lang_masks, state=state, mem_tokens=mem_tokens
         )
         prefix_att_2d_masks = make_att_2d_masks(prefix_pad_masks, prefix_att_masks)
         prefix_position_ids = torch.cumsum(prefix_pad_masks, dim=1) - 1
         # Compute image and language key value cache
-        _, past_key_values = self.vlm_with_expert.forward(
+        prefix_out, past_key_values = self.vlm_with_expert.forward(
             attention_mask=prefix_att_2d_masks,
             position_ids=prefix_position_ids,
             past_key_values=None,
@@ -729,6 +805,17 @@ class VLAFlowMatching(nn.Module):
             use_cache=self.config.use_cache,
             fill_kv_cache=True,
         )
+        
+        # Extract updated memory tokens if enabled
+        updated_mem_tokens = None
+        if self.config.num_mem_tokens > 0:
+            prefix_out = prefix_out[0]  # Get prefix output
+            if self.config.mem_at_end:
+                updated_mem_tokens = prefix_out[:, -self.config.num_mem_tokens:, :]
+            else:
+                updated_mem_tokens = prefix_out[:, :self.config.num_mem_tokens, :]
+            updated_mem_tokens = updated_mem_tokens.transpose(0, 1)  # [num_mem, batch, hidden]
+        
         dt = -1.0 / self.config.num_steps
         dt = torch.tensor(dt, dtype=torch.float32, device=device)
 
@@ -745,7 +832,7 @@ class VLAFlowMatching(nn.Module):
             # Euler step
             x_t += dt * v_t
             time += dt
-        return x_t
+        return x_t, updated_mem_tokens
 
     def denoise_step(
         self,

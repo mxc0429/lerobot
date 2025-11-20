@@ -67,6 +67,11 @@ class SmolVLAConfig(PreTrainedConfig):
     # Attention utils
     use_cache: bool = True
 
+    # RMT Memory settings
+    num_mem_tokens: int = 0  # Number of memory tokens (0 = disabled, 4 = recommended)
+    mem_at_end: bool = False  # Whether to add memory tokens at the end of sequence
+    read_mem_from_cache: bool = False  # Memory tokens attend to cached memory representations
+
     # Finetuning settings
     freeze_vision_encoder: bool = True
     train_expert_only: bool = True
