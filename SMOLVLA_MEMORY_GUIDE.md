@@ -72,17 +72,19 @@ bash train_smolvla_with_memory.sh
 
 ```bash
 lerobot-train \
-  --policy.path=./smolvla_base \
+  --policy.path=lerobot/smolvla_base \
   --dataset.repo_id=${HF_USER}/pickplace_smolvla \
   --batch_size=4 \
   --output_dir=outputs/train/smolvla_with_memory_4tokens \
-  --job_name=smolvla_memory_training \
-  --policy.push_to_hub=false \
+  --job_name=smolvla_memory_4tokens \
+  --policy.push_to_hub=true \
   --policy.device=cuda \
   --wandb.enable=false \
   --policy.num_mem_tokens=4 \
-  --policy.mem_at_end=false \
-  --policy.read_mem_from_cache=false
+  --steps=100000 \
+  --log_freq=100 \
+  --save_freq=10000 \
+  2>&1 | tee outputs/train/smolvla_with_memory_4tokens/training.log
 ```
 
 ### 3. 评估和对比模型

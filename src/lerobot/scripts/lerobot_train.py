@@ -276,6 +276,21 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
         logging.info(f"Effective batch size: {cfg.batch_size} x {num_processes} = {effective_bs}")
         logging.info(f"{num_learnable_params=} ({format_big_number(num_learnable_params)})")
         logging.info(f"{num_total_params=} ({format_big_number(num_total_params)})")
+        
+        # Log memory tokens configuration if using SmolVLA
+        if hasattr(cfg.policy, 'num_mem_tokens'):
+            if cfg.policy.num_mem_tokens > 0:
+                logging.info(colored("Memory Module:", "green", attrs=["bold"]) + f" ENABLED")
+                logging.info(f"  num_mem_tokens={cfg.policy.num_mem_tokens}")
+                logging.info(f"  mem_at_end={cfg.policy.mem_at_end}")
+                logging.info(f"  read_mem_from_cache={cfg.policy.read_mem_from_cache}")
+                # Calculate memory parameters
+                if hasattr(policy, 'model') and hasattr(policy.model, 'mem_tokens') and policy.model.mem_tokens is not None:
+                    mem_params = policy.model.mem_tokens.numel()
+                    mem_ratio = mem_params / num_total_params * 100
+                    logging.info(f"  memory_params={mem_params:,} ({mem_ratio:.4f}% of total)")
+            else:
+                logging.info(colored("Memory Module:", "yellow", attrs=["bold"]) + f" DISABLED (num_mem_tokens=0)")
 
     # create dataloader for offline training
     if hasattr(cfg.policy, "drop_n_last_frames"):
