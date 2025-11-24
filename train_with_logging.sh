@@ -49,7 +49,7 @@ lerobot-train \
   --batch_size=${BATCH_SIZE} \
   --output_dir=${OUTPUT_DIR} \
   --job_name=${JOB_NAME} \
-  --policy.push_to_hub=false \
+  --policy.push_to_hub=true \
   --policy.device=cuda \
   --wandb.enable=false \
   --policy.num_mem_tokens=${NUM_MEM_TOKENS} \

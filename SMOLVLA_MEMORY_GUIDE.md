@@ -85,7 +85,7 @@ lerobot-train \
   --log_freq=100 \
   --save_freq=10000 \
   2>&1 | tee outputs/train/smolvla_with_memory_4tokens/training.log
-```
+
 
 ### 3. 评估和对比模型
 
