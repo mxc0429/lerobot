@@ -1,0 +1,55 @@
+# 多相机遥操作配置示例
+
+# Leader机械臂配置
+leader:
+  port: "/dev/ttyACM0"  # Windows: "COM3", Linux: "/dev/ttyACM0"
+  use_degrees: true
+  leader_id: null  # 设置为你的机械臂ID，例如 "my_leader_arm"
+  calibration_dir: null  # 自定义校准目录路径
+  skip_calibration: false
+
+# 仿真环境配置
+simulation:
+  xml_path: null  # null使用默认场景，或指定自定义XML路径
+  randomize_blocks: false
+  num_blocks: 3
+
+# 显示配置
+display:
+  camera_names:
+    - "top_cam"
+    - "wrist_cam"
+    - "right_cam"
+  camera_width: 320
+  camera_height: 240
+  display_fps: 10
+  show_overlays: true
+  window_name: "SO101 Multi-Camera Teleoperation"
+
+# 控制配置
+control:
+  control_fps: 50
+  max_duration: 300  # 秒
+
+# 性能配置
+performance:
+  # 低性能模式 (适用于较慢的计算机)
+  low_performance:
+    camera_width: 160
+    camera_height: 120
+    display_fps: 5
+    control_fps: 30
+  
+  # 标准模式 (默认)
+  standard:
+    camera_width: 320
+    camera_height: 240
+    display_fps: 10
+    control_fps: 50
+  
+  # 高性能模式 (适用于高端计算机)
+  high_performance:
+    camera_width: 640
+    camera_height: 480
+    display_fps: 30
+    control_fps: 100
