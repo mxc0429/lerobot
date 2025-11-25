@@ -6,6 +6,7 @@ outputs/
 RL/
 #预训练权重
 somvlabase/
+.kiro
 
 # 3. 其他常见的忽略项（可选，但推荐）
 __pycache__/
