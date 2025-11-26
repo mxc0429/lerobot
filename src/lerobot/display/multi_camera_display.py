@@ -106,7 +106,11 @@ class MultiCameraDisplay:
         self._restart_on_crash = False
         if self._thread is not None:
             self._thread.join(timeout=2.0)
-        cv2.destroyAllWindows()
+        try:
+            cv2.destroyAllWindows()
+        except cv2.error:
+            # OpenCV GUI not available, ignore
+            pass
     
     def is_running(self) -> bool:
         """Check if the display thread is running."""
